@@ -6,6 +6,8 @@
 
 ### 🎉 New features
 
+- [native-tabs] Emit a `tabPress` event with `isPrevented: true` when a `disabled` tab is tapped, without selecting it. ([@Ubax](https://github.com/Ubax))
+
 ### 🐛 Bug fixes
 
 - [android] fix renderingMode for toolbar icons ([#46149](https://github.com/expo/expo/pull/46149) by [@Ubax](https://github.com/Ubax))

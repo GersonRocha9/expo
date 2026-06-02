@@ -3249,6 +3249,9 @@ importers:
       prompts:
         specifier: ^2.4.2
         version: 2.4.2
+      resolve-workspace-root:
+        specifier: ^2.0.0
+        version: 2.0.1
       update-check:
         specifier: ^1.5.4
         version: 1.5.4
@@ -18956,9 +18959,7 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 

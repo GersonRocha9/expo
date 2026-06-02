@@ -8,7 +8,7 @@
 
 ### 🎉 New features
 
-- Add a initial layout registry for widgets.
+- Add a initial layout registry for widgets. ([#46501](https://github.com/expo/expo/pull/46501) by [@jakex7](https://github.com/jakex7))
 
 ### 🐛 Bug fixes
 

@@ -6,7 +6,7 @@
 
 ### 🎉 New features
 
-- [native-tabs] Emit a `tabPress` event with `isPrevented: true` when a `disabled` tab is tapped, without selecting it. ([@Ubax](https://github.com/Ubax))
+- [native-tabs] Emit a `tabPress` event with `isPrevented: true` when a `disabled` tab is tapped, without selecting it. ([#46445](https://github.com/expo/expo/pull/46445) by [@Ubax](https://github.com/Ubax))
 
 ### 🐛 Bug fixes
 

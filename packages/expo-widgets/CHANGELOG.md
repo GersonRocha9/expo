@@ -8,6 +8,8 @@
 
 ### 🎉 New features
 
+- Add a initial layout registry for widgets.
+
 ### 🐛 Bug fixes
 
 ### 💡 Others

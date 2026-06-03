@@ -47,15 +47,18 @@ function getFontFaceRulesMatchingResource(
   });
 }
 
-const serverContext: Set<{ name: string; css: string; resourceId: string }> = new Set();
+// Keyed by `resourceId` (the font asset URL) so re-registrations of the same font during a
+// single render — common with streaming SSR, where the tree is evaluated more than once per
+// route — collapse to a single entry instead of accumulating identity-distinct duplicates.
+const serverContext: Map<string, { name: string; css: string; resourceId: string }> = new Map();
 
 function getServerResourceDescriptors(): ServerFontResourceDescriptor[] {
-  const entries = [...serverContext.entries()];
-  if (!entries.length) {
+  if (serverContext.size === 0) {
     return [];
   }
-  const css = entries.map(([{ css }]) => css).join('\n');
-  const links = entries.map(([{ resourceId }]) => resourceId);
+  const entries = [...serverContext.values()];
+  const css = entries.map(({ css }) => css).join('\n');
+  const links = entries.map(({ resourceId }) => resourceId);
   // TODO: Maybe return nothing if no fonts were loaded.
   return [
     {
@@ -145,11 +148,12 @@ const ExpoFontLoader: Required<ExpoFontLoaderModule> = {
       );
     }
     if (typeof window === 'undefined') {
-      serverContext.add({
+      // @ts-expect-error: typeof string
+      const resourceId: string = resource.uri!;
+      serverContext.set(resourceId, {
         name: fontFamilyName,
         css: _createWebFontTemplate(fontFamilyName, resource),
-        // @ts-expect-error: typeof string
-        resourceId: resource.uri!,
+        resourceId,
       });
       return Promise.resolve();
     }

@@ -39,6 +39,7 @@ function resetReactNavigationContexts() {
 
 // NOTE(@hassankhan): Keep in sync with `expo-server/src/manifest.ts`
 export type GetStreamingContentOptions = {
+  isStaticExport?: boolean;
   loader?: {
     data?: any;
     /** Unique key for the route. Derived from the route's contextKey */
@@ -134,7 +135,7 @@ export async function getStreamingContent(
     bodyNodes: [<FontResources key="font-resources" />],
   };
 
-  return await ReactDOMServer.renderToReadableStream(
+  const stream = await ReactDOMServer.renderToReadableStream(
     <ServerDocument data={serverDocumentData}>
       {/* TODO(@hassankhan): Remove `<Head.Provider>` when `unstable_useServerRendering` is stabilized */}
       <Head.Provider context={headContext}>
@@ -157,6 +158,12 @@ export async function getStreamingContent(
       },
     }
   );
+
+  if (options?.isStaticExport) {
+    await stream.allReady;
+  }
+
+  return stream;
 }
 
 export { resolveMetadata } from './metadata';

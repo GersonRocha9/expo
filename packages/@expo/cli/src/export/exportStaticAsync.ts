@@ -6,16 +6,18 @@
  */
 import type { ExpoConfig } from '@expo/config';
 import type { SerialAsset } from '@expo/metro-config/build/serializer/serializerAssets';
+import type { GetStreamingContentOptions } from '@expo/router-server/build/server/renderStreamingContent';
 import chalk from 'chalk';
 import type { RouteNode } from 'expo-router/build/Route';
 import { getContextKey, stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
 import { shouldLinkExternally } from 'expo-router/build/utils/url';
 import type { RoutesManifest } from 'expo-server/private';
 import path from 'path';
+import React, { type ReactNode } from 'react';
 import resolveFrom from 'resolve-from';
 import { inspect } from 'util';
 
-import { getVirtualFaviconAssetsAsync } from './favicon';
+import { getVirtualFaviconAssetsAsync, getVirtualFaviconHeadNodesAsync } from './favicon';
 import { persistMetroAssetsAsync } from './persistMetroAssets';
 import type { ExportAssetMap } from './saveAssets';
 import { getFilesFromSerialAssets } from './saveAssets';
@@ -224,24 +226,36 @@ export async function exportFromServerAsync(
   const isExportingWithSSR =
     exportServer && useServerRendering && !devServer.isReactServerComponentsEnabled;
   const appDir = path.join(projectRoot, routerRoot);
-  const injectFaviconTag = await getVirtualFaviconAssetsAsync(projectRoot, {
-    outputDir,
-    baseUrl,
-    files,
-    exp,
-  });
 
-  const [resources, { manifest, serverManifest, renderAsync, executeLoaderAsync }] =
-    await Promise.all([
-      devServer.getStaticResourcesAsync({
-        includeSourceMaps,
-      }),
-      devServer.getStaticRenderFunctionAsync(),
-    ]);
+  // When `useServerRendering` is on, the prerender flows through the streaming renderer and
+  // injects assets/extra head tags as React nodes — so we collect favicon as nodes instead of a
+  // post-render HTML mutator.
+  const injectFaviconTag = useServerRendering
+    ? null
+    : await getVirtualFaviconAssetsAsync(projectRoot, { outputDir, baseUrl, files, exp });
+  const faviconHeadNodes = useServerRendering
+    ? await getVirtualFaviconHeadNodesAsync(projectRoot, { outputDir, baseUrl, files, exp })
+    : null;
+
+  const [
+    resources,
+    { manifest, serverManifest, renderAsync, executeLoaderAsync, resolveMetadataAsync },
+  ] = await Promise.all([
+    devServer.getStaticResourcesAsync({
+      includeSourceMaps,
+    }),
+    devServer.getStaticRenderFunctionAsync(),
+  ]);
 
   makeRuntimeEntryPointsAbsolute(manifest, appDir);
 
   debug('Routes:\n', inspect(manifest, { colors: true, depth: null }));
+
+  // Compute per-route CSS/JS asset URLs once. Used by both the streamed prerender (to feed
+  // `renderOpts.assets`, mirroring runtime SSR) and the SSR routes-manifest writer below.
+  const perRouteAssets = useServerRendering
+    ? computePerRouteAssets({ artifacts: resources.artifacts, manifest, baseUrl })
+    : null;
 
   await getFilesToExportFromServerAsync(projectRoot, {
     files,
@@ -254,7 +268,7 @@ export async function exportFromServerAsync(
         pathname === '' ? '/' : pathname.startsWith('/') ? pathname : `/${pathname}`;
 
       const useServerLoaders = exp?.extra?.router?.unstable_useServerDataLoaders;
-      let renderOpts;
+      const renderOpts: GetStreamingContentOptions = {};
 
       if (useServerLoaders) {
         const loaderResponse = await executeLoaderAsync(normalizedPathname, route);
@@ -271,8 +285,54 @@ export async function exportFromServerAsync(
             loaderId: loaderKey,
           });
 
-          renderOpts = { loader: { data, key: loaderKey } };
+          renderOpts.loader = { data, key: loaderKey };
         }
+      }
+
+      if (useServerRendering && perRouteAssets) {
+        // Mirror runtime SSR: feed assets through `renderOpts` so React emits scripts/styles
+        // inline via `bootstrapScripts` + head nodes, rather than post-hoc string injection.
+        const asyncChunks = perRouteAssets.routeAsyncChunks.get(route.contextKey) ?? [];
+        renderOpts.assets = {
+          css: perRouteAssets.cssAssets,
+          js: [...perRouteAssets.syncJsAssets, ...asyncChunks],
+        };
+
+        // Mirror runtime SSR: resolve `generateMetadata()` per route and pass the result through
+        // `renderOpts.metadata` so its `<head>` nodes get rendered into the document by React.
+        const resolvedMetadata = await resolveMetadataAsync(normalizedPathname, route);
+
+        const headNodes: ReactNode[] = [];
+        if (resolvedMetadata?.headNodes) {
+          headNodes.push(...resolvedMetadata.headNodes);
+        }
+        if (faviconHeadNodes) {
+          headNodes.push(...faviconHeadNodes);
+        }
+        if (scriptTags) {
+          // <script type="type/expo" data-platform="ios" src="..." />
+          for (let i = 0; i < scriptTags.length; i++) {
+            const tag = scriptTags[i];
+            headNodes.push(
+              React.createElement(
+                'script',
+                tag.platform === 'web'
+                  ? { key: `extra-script-${i}`, src: tag.src }
+                  : {
+                      key: `extra-script-${i}`,
+                      type: 'type/expo',
+                      src: tag.src,
+                      'data-platform': tag.platform,
+                    }
+              )
+            );
+          }
+        }
+        if (headNodes.length > 0) {
+          renderOpts.metadata = { headNodes };
+        }
+
+        return await renderAsync(normalizedPathname, route, renderOpts);
       }
 
       const template = await renderAsync(normalizedPathname, route, renderOpts);
@@ -357,50 +417,9 @@ export async function exportFromServerAsync(
         });
       }
 
-      const toAssetUrl = (filename: string) =>
-        baseUrl ? `${baseUrl}/${filename}` : `/${filename}`;
-
-      const cssAssets = resources.artifacts
-        .filter((asset) => asset.type === 'css')
-        .map((asset) => toAssetUrl(asset.filename));
-
-      const jsArtifacts = resources.artifacts.filter((asset) => asset.type === 'js');
-      const orderedJsAssets = assetsRequiresSort(jsArtifacts);
-      const syncJs = orderedJsAssets.filter((asset) => !asset.metadata.isAsync);
-      const asyncJs = orderedJsAssets.filter((asset) => asset.metadata.isAsync);
-
-      const syncJsAssets = syncJs.map((asset) => toAssetUrl(asset.filename));
-
-      const htmlRoutes = getHtmlFiles({ manifest, includeGroupVariations: false });
-
-      // Build per-route async chunk assignments
-      const routeAssets = new Map<string, string[]>();
-      for (const { route } of htmlRoutes) {
-        if (!route.entryPoints || !Array.isArray(route.entryPoints)) {
-          continue;
-        }
-
-        const matchedChunks: SerialAsset[] = [];
-        for (const asyncChunk of asyncJs) {
-          if (!asyncChunk.metadata.modulePaths || !Array.isArray(asyncChunk.metadata.modulePaths)) {
-            continue;
-          }
-          const hasRouteEntryPoint = route.entryPoints.some((entryPoint) =>
-            (asyncChunk.metadata.modulePaths as string[]).includes(entryPoint)
-          );
-          if (hasRouteEntryPoint) {
-            matchedChunks.push(asyncChunk);
-          }
-        }
-
-        if (matchedChunks.length > 0) {
-          const sorted = sortMatchedAssetsByEntryPoints(matchedChunks, route.entryPoints);
-          routeAssets.set(
-            route.contextKey,
-            sorted.map((chunk) => toAssetUrl(chunk.filename))
-          );
-        }
-      }
+      // Reuses the per-route asset map already computed before the prerender loop.
+      // `perRouteAssets` is non-null here because `isExportingWithSSR` implies `useServerRendering`.
+      const { cssAssets, syncJsAssets, routeAsyncChunks } = perRouteAssets!;
 
       // Add assets and rendering config to the routes manifest
       updateExportManifestInFiles({
@@ -413,7 +432,7 @@ export async function exportFromServerAsync(
           };
 
           for (const route of manifest.htmlRoutes) {
-            const asyncChunks = routeAssets.get(route.file);
+            const asyncChunks = routeAsyncChunks.get(route.file);
             if (asyncChunks) {
               route.assets = { css: [], js: asyncChunks };
             }
@@ -756,6 +775,74 @@ async function exportLoadersAsync({
   });
 
   debug('Exported loaders for routes:', entryPointModules);
+}
+
+type PerRouteAssets = {
+  cssAssets: string[];
+  syncJsAssets: string[];
+  /** Per-route async JS chunk URLs, keyed by `RouteNode.contextKey`. */
+  routeAsyncChunks: Map<string, string[]>;
+};
+
+/**
+ * Computes the asset URLs used by both the streamed prerender (per-render `renderOpts.assets`)
+ * and the SSR routes manifest writer (top-level + per-route).
+ *
+ * Async chunks are matched to routes by checking which chunks include any of the route's
+ * `entryPoints`. Mirrors `mergeAssets` in `expo-server/src/vendor/environment/common.ts`.
+ */
+function computePerRouteAssets({
+  artifacts,
+  manifest,
+  baseUrl,
+}: {
+  artifacts: SerialAsset[];
+  manifest: ExpoRouterRuntimeManifest;
+  baseUrl: string;
+}): PerRouteAssets {
+  const toAssetUrl = (filename: string) => (baseUrl ? `${baseUrl}/${filename}` : `/${filename}`);
+
+  const cssAssets = artifacts
+    .filter((asset) => asset.type === 'css')
+    .map((asset) => toAssetUrl(asset.filename));
+
+  const jsArtifacts = artifacts.filter((asset) => asset.type === 'js');
+  const orderedJsAssets = assetsRequiresSort(jsArtifacts);
+  const syncJs = orderedJsAssets.filter((asset) => !asset.metadata.isAsync);
+  const asyncJs = orderedJsAssets.filter((asset) => asset.metadata.isAsync);
+  const syncJsAssets = syncJs.map((asset) => toAssetUrl(asset.filename));
+
+  const htmlRoutes = getHtmlFiles({ manifest, includeGroupVariations: false });
+
+  const routeAsyncChunks = new Map<string, string[]>();
+  for (const { route } of htmlRoutes) {
+    if (!route.entryPoints || !Array.isArray(route.entryPoints)) {
+      continue;
+    }
+
+    const matchedChunks: SerialAsset[] = [];
+    for (const asyncChunk of asyncJs) {
+      if (!asyncChunk.metadata.modulePaths || !Array.isArray(asyncChunk.metadata.modulePaths)) {
+        continue;
+      }
+      const hasRouteEntryPoint = route.entryPoints.some((entryPoint) =>
+        (asyncChunk.metadata.modulePaths as string[]).includes(entryPoint)
+      );
+      if (hasRouteEntryPoint) {
+        matchedChunks.push(asyncChunk);
+      }
+    }
+
+    if (matchedChunks.length > 0) {
+      const sorted = sortMatchedAssetsByEntryPoints(matchedChunks, route.entryPoints);
+      routeAsyncChunks.set(
+        route.contextKey,
+        sorted.map((chunk) => toAssetUrl(chunk.filename))
+      );
+    }
+  }
+
+  return { cssAssets, syncJsAssets, routeAsyncChunks };
 }
 
 // NOTE(@hassankhan): We should ideally persist the manifest to `files` only once instead of

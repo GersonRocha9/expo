@@ -29,10 +29,12 @@ import type { RouteNode } from 'expo-router/build/Route';
 import {
   type RouteInfo,
   type RoutesManifest,
-  type ImmutableRequest,
+  ImmutableRequest,
   resolveLoaderContextKey,
 } from 'expo-server/private';
 import path from 'path';
+import { type ReactNode } from 'react';
+import { text as readStreamToText } from 'stream/consumers';
 
 import {
   createServerComponentsMiddleware,
@@ -498,9 +500,18 @@ export class MetroBundlerDevServer extends BundlerDevServer {
     renderAsync: (
       path: string,
       route: RouteNode,
-      opts?: GetStaticContentOptions
+      opts?: GetStreamingContentOptions
     ) => Promise<string>;
     executeLoaderAsync: (path: string, route: RouteNode) => Promise<Response | undefined>;
+    /**
+     * Resolves a route's `generateMetadata()` export at export time. Returns `null` if the route
+     * has no `generateMetadata()`. Mirrors the SSR runtime's `resolveMetadata` call in
+     * `expo-server/src/vendor/environment/common.ts`.
+     */
+    resolveMetadataAsync: (
+      path: string,
+      route: RouteNode
+    ) => Promise<{ headNodes: ReactNode[] } | null>;
   }> {
     const { routerRoot } = this.instanceMetroOptions;
     assert(
@@ -511,14 +522,19 @@ export class MetroBundlerDevServer extends BundlerDevServer {
     const appDir = path.join(this.projectRoot, routerRoot);
     const url = this.getDevServerUrlOrAssert();
 
-    const { getStaticContent, getManifest, getBuildTimeServerManifestAsync } =
-      await this.ssrLoadModule<
-        typeof import('@expo/router-server/build/static/renderStaticContent')
-      >(require.resolve('@expo/router-server/node/render.js'), {
-        // This must always use the legacy rendering resolution (no `react-server`) because it leverages
-        // the previous React SSG utilities which aren't available in React 19.
-        environment: 'node',
-      });
+    const {
+      getStaticContent,
+      getStreamingContent,
+      getManifest,
+      getBuildTimeServerManifestAsync,
+      resolveMetadata,
+    } = await this.ssrLoadModule<
+      typeof import('@expo/router-server/build/static/renderStaticContent')
+    >(require.resolve('@expo/router-server/node/render.js'), {
+      // This must always use the legacy rendering resolution (no `react-server`) because it leverages
+      // the previous React SSG utilities which aren't available in React 19.
+      environment: 'node',
+    });
 
     const { exp } = getConfig(this.projectRoot);
     const useServerRendering = exp.extra?.router?.unstable_useServerRendering ?? false;
@@ -538,7 +554,12 @@ export class MetroBundlerDevServer extends BundlerDevServer {
       // Get route generating function
       renderAsync: async (path, route, opts?) => {
         const location = new URL(path, url);
-        return await getStaticContent(location, opts);
+        if (useServerRendering) {
+          const stream = await getStreamingContent(location, { ...opts, isStaticExport: true });
+          return await readStreamToText(stream);
+        }
+        const { loader, request, assets }: GetStaticContentOptions = opts ?? {};
+        return await getStaticContent(location, { loader, request, assets });
       },
       executeLoaderAsync: async (path, route) => {
         const location = new URL(path, url);
@@ -553,6 +574,30 @@ export class MetroBundlerDevServer extends BundlerDevServer {
         }
 
         return this.executeServerDataLoaderAsync(location, resolvedLoaderRoute);
+      },
+      resolveMetadataAsync: async (path, route) => {
+        if (typeof resolveMetadata !== 'function') {
+          return null;
+        }
+        const location = new URL(path, url);
+        const resolvedRoute = fromRuntimeManifestRoute(location.pathname, route, {
+          serverManifest: inflateManifest(serverManifest),
+          appDir,
+        });
+        if (!resolvedRoute) {
+          return null;
+        }
+        return resolveMetadata({
+          route: {
+            // `resolvedRoute.file` is the route module path (same value as the SSR manifest's
+            // `RouteInfo.file`), and `resolvedRoute.contextKey` is the URL pattern (e.g. `/foo/[id]`),
+            // matching how `expo-server`'s runtime SSR populates the same call.
+            file: resolvedRoute.file,
+            page: resolvedRoute.contextKey,
+          },
+          request: new ImmutableRequest(new Request(location)),
+          params: resolvedRoute.params,
+        });
       },
     };
   }
@@ -1744,8 +1789,9 @@ export class MetroBundlerDevServer extends BundlerDevServer {
         callback: async () => {
           // Run once, this prevents the TypeScript project prerequisite from running on every file change.
           off();
-          const { TypeScriptProjectPrerequisite } =
-            await import('../../doctor/typescript/TypeScriptProjectPrerequisite.js');
+          const { TypeScriptProjectPrerequisite } = await import(
+            '../../doctor/typescript/TypeScriptProjectPrerequisite.js'
+          );
 
           try {
             const req = new TypeScriptProjectPrerequisite(this.projectRoot);

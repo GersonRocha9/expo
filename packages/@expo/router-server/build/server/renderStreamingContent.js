@@ -117,7 +117,7 @@ async function getStreamingContent(location, options) {
         ],
         bodyNodes: [(0, jsx_runtime_1.jsx)(FontResources, {}, "font-resources")],
     };
-    return await server_2.default.renderToReadableStream((0, jsx_runtime_1.jsx)(server_1.ServerDocument, { data: serverDocumentData, children: (0, jsx_runtime_1.jsx)(head_1.default.Provider, { context: headContext, children: (0, jsx_runtime_1.jsx)(static_1.InnerRoot, { loadedData: loadedData, children: element }) }) }), {
+    const stream = await server_2.default.renderToReadableStream((0, jsx_runtime_1.jsx)(server_1.ServerDocument, { data: serverDocumentData, children: (0, jsx_runtime_1.jsx)(head_1.default.Provider, { context: headContext, children: (0, jsx_runtime_1.jsx)(static_1.InnerRoot, { loadedData: loadedData, children: element }) }) }), {
         // TODO(@hassankhan): Experiment and see if we can calculate a better default
         // We're doubling the default here so non-JavaScript renders show some content
         progressiveChunkSize: 12800 * 2,
@@ -131,6 +131,10 @@ async function getStreamingContent(location, options) {
             console.error('SSR streaming render error:', error);
         },
     });
+    if (options?.isStaticExport) {
+        await stream.allReady;
+    }
+    return stream;
 }
 var metadata_1 = require("./metadata");
 Object.defineProperty(exports, "resolveMetadata", { enumerable: true, get: function () { return metadata_1.resolveMetadata; } });

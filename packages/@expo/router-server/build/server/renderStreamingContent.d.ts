@@ -6,6 +6,7 @@
  */
 import { ReactNode } from 'react';
 export type GetStreamingContentOptions = {
+    isStaticExport?: boolean;
     loader?: {
         data?: any;
         /** Unique key for the route. Derived from the route's contextKey */

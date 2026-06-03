@@ -8,9 +8,28 @@ import { findProjectFiles, getHtml, getPageHtml, getRouterE2ERoot } from '../uti
 
 runExportSideEffects();
 
-describe('exports static', () => {
+/**
+ * Static export coverage, parametrized across the two renderer modes:
+ * - `legacy`: the existing `renderToString` path.
+ * - `streaming`: `renderToReadableStream` + `stream.allReady`, enabled by setting
+ *   `unstable_useServerRendering: true` (`E2E_ROUTER_SERVER_RENDERING=true` in the fixture).
+ *
+ * Most assertions are identical across modes; per-mode differences (asset counts, font
+ * registration, helmet behavior, metadata wiring) branch on `mode`.
+ */
+describe.each([
+  {
+    mode: 'legacy',
+    outputName: 'dist-static-rendering',
+    env: {},
+  },
+  {
+    mode: 'streaming',
+    outputName: 'dist-static-stream-rendering',
+    env: { E2E_ROUTER_SERVER_RENDERING: 'true' },
+  },
+] as const)('exports static ($mode)', ({ mode, outputName, env }) => {
   const projectRoot = getRouterE2ERoot();
-  const outputName = 'dist-static-rendering';
   const outputDir = path.join(projectRoot, outputName);
 
   beforeAll(async () => {
@@ -23,6 +42,7 @@ describe('exports static', () => {
           EXPO_USE_STATIC: 'static',
           E2E_ROUTER_SRC: 'static-rendering',
           E2E_ROUTER_ASYNC: '',
+          ...env,
         },
       }
     );
@@ -55,7 +75,6 @@ describe('exports static', () => {
       expect(html.querySelector('[data-testid="styled-text"]')?.textContent).toEqual('Hello World');
     });
 
-    ['other', 'welcome-to-the-universe'].forEach((post) => {});
     it.each([{ post: 'other' }, { post: 'welcome-to-the-universe' }])(
       `can serve up statically generated html for post: $post`,
       async ({ post }) => {
@@ -147,15 +166,20 @@ describe('exports static', () => {
     const queryMeta = (name: string) =>
       indexHtml.querySelector(`html > head > meta[name="${name}"]`)?.attributes.content;
 
-    // Injected in app/+html.js
+    // Injected in app/+html.tsx (server-rendered React, not helmet)
     expect(queryMeta('expo-e2e-public-env-var')).toEqual('foobar');
     // non-public env vars are injected during SSG
     expect(queryMeta('expo-e2e-private-env-var')).toEqual('not-public-value');
 
-    // Injected in app/_layout.js
-    expect(queryMeta('expo-e2e-public-env-var-client')).toEqual('foobar');
-    // non-public env vars are injected during SSG
-    expect(queryMeta('expo-e2e-private-env-var-client')).toEqual('not-public-value');
+    if (mode === 'legacy') {
+      // Injected in app/_layout.tsx via `<Head>` (react-helmet). Helmet collects tags into a
+      // context during render and `getStaticContent` post-processes them into <head>, but
+      // `getStreamingContent` has no equivalent — so these tags are absent under streaming.
+      // Use `generateMetadata()` instead (covered below).
+      // TODO(@hassankhan): Restore for streaming once helmet/streaming gap is closed.
+      expect(queryMeta('expo-e2e-public-env-var-client')).toEqual('foobar');
+      expect(queryMeta('expo-e2e-private-env-var-client')).toEqual('not-public-value');
+    }
 
     indexHtml
       .querySelectorAll('script')
@@ -173,8 +197,11 @@ describe('exports static', () => {
   it('static styles are injected', async () => {
     const indexHtml = await getPageHtml(outputDir, 'index.html');
     expect(indexHtml.querySelectorAll('html > head > style')?.length).toBe(
-      // React Native and Expo resets
-      3
+      // Legacy: expo-reset + react-native-stylesheet + expo-generated-fonts (3).
+      // Streaming: expo-reset + react-native-stylesheet only (2). `<FontResources>` is
+      // mounted in `bodyNodes`, so the generated-fonts style lives at end-of-body — matches
+      // the SSR runtime placement.
+      mode === 'legacy' ? 3 : 2
     );
     // The Expo style reset
     expect(indexHtml.querySelector('html > head > style#expo-reset')?.innerHTML).toEqual(
@@ -186,6 +213,11 @@ describe('exports static', () => {
     expect(
       indexHtml.querySelector('html > head > style#react-native-stylesheet')?.innerHTML
     ).toEqual(expect.stringContaining('[stylesheet-group="0"]{}'));
+
+    if (mode === 'streaming') {
+      // Generated fonts style is emitted at end of body (matches streamed SSR)
+      expect(indexHtml.querySelector('html > body style#expo-generated-fonts')).not.toBeNull();
+    }
   });
 
   it('statically extracts CSS', async () => {
@@ -197,8 +229,10 @@ describe('exports static', () => {
       return link.attributes.as !== 'font';
     });
     expect(links.length).toBe(
-      // Global CSS, CSS Module
-      4
+      // Global CSS (preload + stylesheet) + CSS module (preload + stylesheet) = 4.
+      // Streaming adds React 19's automatic bootstrap-script preload
+      // (`<link rel="preload" as="script">`), so +1.
+      mode === 'legacy' ? 4 : 5
     );
 
     const linkStrings = links.map((l) => l.toString());
@@ -207,17 +241,17 @@ describe('exports static', () => {
       expect.arrayContaining([
         // Global CSS (preload + stylesheet)
         expect.stringMatching(
-          /<link rel="preload" href="\/_expo\/static\/css\/global-(?<md5>[0-9a-fA-F]{32})\.css" as="style">/
+          /<link rel="preload" href="\/_expo\/static\/css\/global-(?<md5>[0-9a-fA-F]{32})\.css" as="style"\/?>/
         ),
         expect.stringMatching(
-          /<link rel="stylesheet" href="\/_expo\/static\/css\/global-(?<md5>[0-9a-fA-F]{32})\.css">/
+          /<link rel="stylesheet" href="\/_expo\/static\/css\/global-(?<md5>[0-9a-fA-F]{32})\.css"\/?>/
         ),
         // Example test CSS module (preload + stylesheet)
         expect.stringMatching(
-          /<link rel="preload" href="\/_expo\/static\/css\/test\.module-(?<md5>[0-9a-fA-F]{32})\.css" as="style">/
+          /<link rel="preload" href="\/_expo\/static\/css\/test\.module-(?<md5>[0-9a-fA-F]{32})\.css" as="style"\/?>/
         ),
         expect.stringMatching(
-          /<link rel="stylesheet" href="\/_expo\/static\/css\/test\.module-(?<md5>[0-9a-fA-F]{32})\.css">/
+          /<link rel="stylesheet" href="\/_expo\/static\/css\/test\.module-(?<md5>[0-9a-fA-F]{32})\.css"\/?>/
         ),
       ])
     );
@@ -231,7 +265,8 @@ describe('exports static', () => {
       ).toMatchInlineSnapshot(`"div{background:#0ff}"`);
     }
 
-    // CSS Module
+    // CSS Module — index access stays the same since the React 19 script preload sorts before
+    // the CSS preloads in streaming output: [script-preload, global-preload, module-preload, ...]
     expect(
       fs.readFileSync(path.join(outputDir, links[2]?.attributes.href ?? ''), 'utf-8')
     ).toMatchInlineSnapshot(`".HPV33q_text{color:#1e90ff}"`);
@@ -250,17 +285,29 @@ describe('exports static', () => {
     const indexHtml = await getPageHtml(outputDir, 'index.html');
 
     const links = indexHtml.querySelectorAll('html > head > link[as="font"]');
-    expect(links.length).toBe(1);
-    expect(links[0]?.attributes.href).toBe(
+    expect(links.length).toBe(
+      // Streaming evaluates more of the tree (Suspense resolution / progressive flushes), so it
+      // also picks up navigation chrome fonts (EvilIcons) that the legacy single-pass
+      // `renderToString` path didn't register. After the `Map`-keyed dedup fix in
+      // `ExpoFontLoader.web.ts`, each distinct font still appears exactly once.
+      mode === 'legacy' ? 1 : 2
+    );
+
+    const sweet = links.find((l) =>
+      /static-rendering\/sweet\.[a-zA-Z0-9]{32}\.ttf$/.test(l.attributes.href ?? '')
+    );
+    expect(sweet).toBeDefined();
+    expect(sweet?.attributes.href).toBe(
       '/assets/__e2e__/static-rendering/sweet.7c9263d3cffcda46ff7a4d9c00472c07.ttf'
     );
 
-    expect(links[0]?.toString()).toMatch(
-      /<link rel="preload" href="\/assets\/__e2e__\/static-rendering\/sweet\.[a-zA-Z0-9]{32}\.ttf" as="font" crossorigin="" >/
+    // Self-closing whitespace differs (`/ >` from string injection, `/>` from React) — both ok.
+    expect(sweet?.toString()).toMatch(
+      /<link rel="preload" href="\/assets\/__e2e__\/static-rendering\/sweet\.[a-zA-Z0-9]{32}\.ttf" as="font" crossorigin=""\s*\/?>/
     );
 
     expect(
-      fs.readFileSync(path.join(outputDir, links[0]?.attributes.href?.replace(/\?.*$/, '') ?? ''), 'utf-8')
+      fs.readFileSync(path.join(outputDir, sweet?.attributes.href?.replace(/\?.*$/, '') ?? ''), 'utf-8')
     ).toBeDefined();
 
     // Ensure the font is used
@@ -288,11 +335,16 @@ describe('exports static', () => {
     // Root element
     expect(page).toContain('<div id="root">');
 
-    const sanitized = page.replace(
-      /<script src="\/_expo\/static\/js\/web\/.*" defer>/,
-      '<script src="/_expo/static/js/web/[mock].js" defer>'
-    );
-    expect(sanitized).toMatchSnapshot();
+    if (mode === 'legacy') {
+      // Snapshot only in legacy mode: the streaming pipeline emits a differently-structured
+      // document (React 19 bootstrap, async bundle script, helmet tags absent), so an HTML
+      // snapshot there would mostly capture renderer mechanics rather than fixture behavior.
+      const sanitized = page.replace(
+        /<script src="\/_expo\/static\/js\/web\/.*" defer>/,
+        '<script src="/_expo/static/js/web/[mock].js" defer>'
+      );
+      expect(sanitized).toMatchSnapshot();
+    }
 
     expect(
       (await getPageHtml(outputDir, 'about.html')).querySelector(
@@ -313,7 +365,10 @@ describe('exports static', () => {
     ).toBe('/welcome-to-the-universe');
   });
 
-  it('supports nested static head values', async () => {
+  // `<Head>` (react-helmet) is unsupported in streaming mode (no post-render injection
+  // equivalent in `getStreamingContent`). Use `generateMetadata()` instead (test below).
+  // TODO(@hassankhan): Restore for streaming once helmet/streaming gap is closed.
+  (mode === 'legacy' ? it : it.skip)('supports nested static head values', async () => {
     // <title>About | Website</title>
     // <meta name="description" content="About page" />
     const about = await getPageHtml(outputDir, 'about.html');
@@ -335,4 +390,25 @@ describe('exports static', () => {
       )?.attributes.content
     ).toBe('TEST_VALUE');
   });
+
+  // `generateMetadata()` is wired through `renderOpts.metadata.headNodes` only in the streaming
+  // path today (`getStaticContent` doesn't accept a `metadata` option). Mirrors the SSR version
+  // in `server-rendering.test.ts`.
+  (mode === 'streaming' ? it : it.skip)(
+    'injects `generateMetadata()` result into <head> at export time',
+    async () => {
+      const metadataHtml = await getPageHtml(outputDir, 'metadata.html');
+
+      expect(metadataHtml.querySelector('[data-testid="metadata-text"]')?.innerText).toBe(
+        'Metadata'
+      );
+      expect(metadataHtml.querySelector('html > head > title')?.innerText).toBe('Metadata Page');
+      expect(
+        metadataHtml.querySelector('html > head > meta[name="description"]')?.attributes.content
+      ).toBe('Page with generateMetadata');
+      expect(
+        metadataHtml.querySelector('html > head > meta[name="keywords"]')?.attributes.content
+      ).toBe('metadata, e2e');
+    }
+  );
 });

@@ -78,6 +78,14 @@ public final class ModuleHolder {
   }
 
   @JavaScriptActor
+  func withEventTarget<R>(_ body: (borrowing JavaScriptObject) throws -> R) rethrows -> R? {
+    if javaScriptObject == nil {
+      javaScriptObject = createJavaScriptModuleObject()
+    }
+    return try body(javaScriptObject!)
+  }
+
+  @JavaScriptActor
   func getJavaScriptValue() -> JavaScriptValue? {
     if javaScriptObject == nil {
       javaScriptObject = createJavaScriptModuleObject()

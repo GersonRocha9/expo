@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createInjectedCssAsNodes = createInjectedCssAsNodes;
 exports.createInjectedInlineCssAsNodes = createInjectedInlineCssAsNodes;
 exports.createInjectedScriptAsNodes = createInjectedScriptAsNodes;
+exports.createInjectedFaviconAsNodes = createInjectedFaviconAsNodes;
+exports.createInjectedExtraScriptTagsAsNodes = createInjectedExtraScriptTagsAsNodes;
 exports.getBootstrapContents = getBootstrapContents;
 exports.createInjectedFontsAsNodes = createInjectedFontsAsNodes;
 const jsx_runtime_1 = require("react/jsx-runtime");
@@ -24,6 +26,24 @@ function createInjectedScriptAsNodes(srcs) {
     return {
         headNodes: srcs.map((src) => ((0, jsx_runtime_1.jsx)("link", { rel: "preload", href: src, as: "script" }, `script-preload-${src}`))),
         bodyNodes: srcs.map((src) => (0, jsx_runtime_1.jsx)("script", { defer: true, src: src }, `script-src-${src}`)),
+    };
+}
+/**
+ * Returns a `<link rel="icon">` head node for the given favicon URL. Companion to
+ * `createInjectedFaviconAsString` in `utils/html.ts`.
+ */
+function createInjectedFaviconAsNodes(href) {
+    return {
+        headNodes: [(0, jsx_runtime_1.jsx)("link", { rel: "icon", href: href }, `favicon-${href}`)],
+    };
+}
+/**
+ * Returns `<script>` head nodes for each {@link ExtraScriptTag}. Companion to
+ * `createInjectedExtraScriptTagsAsString` in `utils/html.ts`.
+ */
+function createInjectedExtraScriptTagsAsNodes(tags) {
+    return {
+        headNodes: tags.map((tag, index) => tag.platform === 'web' ? ((0, jsx_runtime_1.jsx)("script", { src: tag.src }, `extra-script-${index}`)) : ((0, jsx_runtime_1.jsx)("script", { type: "type/expo", src: tag.src, "data-platform": tag.platform }, `extra-script-${index}`))),
     };
 }
 function getBootstrapContents({ hydrate = true, loadedData, }) {

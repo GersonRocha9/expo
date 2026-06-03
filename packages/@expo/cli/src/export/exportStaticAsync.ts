@@ -7,17 +7,25 @@
 import type { ExpoConfig } from '@expo/config';
 import type { SerialAsset } from '@expo/metro-config/build/serializer/serializerAssets';
 import type { GetStreamingContentOptions } from '@expo/router-server/build/server/renderStreamingContent';
+import {
+  createInjectedExtraScriptTagsAsString,
+  createInjectedFaviconAsString,
+  type ExtraScriptTag,
+} from '@expo/router-server/build/utils/html';
+import {
+  createInjectedExtraScriptTagsAsNodes,
+  createInjectedFaviconAsNodes,
+} from '@expo/router-server/build/utils/react';
 import chalk from 'chalk';
 import type { RouteNode } from 'expo-router/build/Route';
 import { getContextKey, stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
 import { shouldLinkExternally } from 'expo-router/build/utils/url';
 import type { RoutesManifest } from 'expo-server/private';
 import path from 'path';
-import React, { type ReactNode } from 'react';
 import resolveFrom from 'resolve-from';
 import { inspect } from 'util';
 
-import { getVirtualFaviconAssetsAsync, getVirtualFaviconHeadNodesAsync } from './favicon';
+import { getVirtualFaviconHrefAsync } from './favicon';
 import { persistMetroAssetsAsync } from './persistMetroAssets';
 import type { ExportAssetMap } from './saveAssets';
 import { getFilesFromSerialAssets } from './saveAssets';
@@ -36,11 +44,6 @@ import {
 import { learnMore } from '../utils/link';
 
 const debug = require('debug')('expo:export:generateStaticRoutes') as typeof console.log;
-
-type ExtraScriptTag = {
-  platform: string;
-  src: string;
-};
 
 type Options = {
   mode: 'production' | 'development';
@@ -71,15 +74,10 @@ type HtmlRequestLocation = {
 };
 
 export function injectScriptTags(html: string, scriptTags: ExtraScriptTag[]): string {
-  const scriptTagsHtml = scriptTags
-    .map((tag) =>
-      tag.platform === 'web'
-        ? `<script src="${tag.src}"></script>`
-        : `<script type="type/expo" src="${tag.src}" data-platform="${tag.platform}"></script>`
-    )
-    .join('\n');
-  html = html.replace('</head>', `${scriptTagsHtml}\n</head>`);
-  return html;
+  return html.replace(
+    '</head>',
+    `${createInjectedExtraScriptTagsAsString(scriptTags)}\n</head>`
+  );
 }
 
 /** Match `(page)` -> `page` */
@@ -227,15 +225,17 @@ export async function exportFromServerAsync(
     exportServer && useServerRendering && !devServer.isReactServerComponentsEnabled;
   const appDir = path.join(projectRoot, routerRoot);
 
-  // When `useServerRendering` is on, the prerender flows through the streaming renderer and
-  // injects assets/extra head tags as React nodes — so we collect favicon as nodes instead of a
-  // post-render HTML mutator.
-  const injectFaviconTag = useServerRendering
-    ? null
-    : await getVirtualFaviconAssetsAsync(projectRoot, { outputDir, baseUrl, files, exp });
-  const faviconHeadNodes = useServerRendering
-    ? await getVirtualFaviconHeadNodesAsync(projectRoot, { outputDir, baseUrl, files, exp })
-    : null;
+  // Resolve the favicon once. Both branches inject it the same way (a `<link rel="icon">`),
+  // but in different forms: the legacy path replaces strings post-render, while the streaming
+  // path hands React nodes to `renderOpts.metadata.headNodes`. The actual element creators
+  // live in `@expo/router-server/utils/{html,react}` so the markup stays co-located with the
+  // other injected-asset helpers.
+  const faviconHref = await getVirtualFaviconHrefAsync(projectRoot, {
+    outputDir,
+    baseUrl,
+    files,
+    exp,
+  });
 
   const [
     resources,
@@ -302,32 +302,11 @@ export async function exportFromServerAsync(
         // `renderOpts.metadata` so its `<head>` nodes get rendered into the document by React.
         const resolvedMetadata = await resolveMetadataAsync(normalizedPathname, route);
 
-        const headNodes: ReactNode[] = [];
-        if (resolvedMetadata?.headNodes) {
-          headNodes.push(...resolvedMetadata.headNodes);
-        }
-        if (faviconHeadNodes) {
-          headNodes.push(...faviconHeadNodes);
-        }
-        if (scriptTags) {
-          // <script type="type/expo" data-platform="ios" src="..." />
-          for (let i = 0; i < scriptTags.length; i++) {
-            const tag = scriptTags[i];
-            headNodes.push(
-              React.createElement(
-                'script',
-                tag.platform === 'web'
-                  ? { key: `extra-script-${i}`, src: tag.src }
-                  : {
-                      key: `extra-script-${i}`,
-                      type: 'type/expo',
-                      src: tag.src,
-                      'data-platform': tag.platform,
-                    }
-              )
-            );
-          }
-        }
+        const headNodes = [
+          ...(resolvedMetadata?.headNodes ?? []),
+          ...(faviconHref ? createInjectedFaviconAsNodes(faviconHref).headNodes ?? [] : []),
+          ...(scriptTags ? createInjectedExtraScriptTagsAsNodes(scriptTags).headNodes ?? [] : []),
+        ];
         if (headNodes.length > 0) {
           renderOpts.metadata = { headNodes };
         }
@@ -345,8 +324,8 @@ export async function exportFromServerAsync(
         hydrate: true,
       });
 
-      if (injectFaviconTag) {
-        html = injectFaviconTag(html);
+      if (faviconHref && html.includes('</head>')) {
+        html = html.replace('</head>', `${createInjectedFaviconAsString(faviconHref)}</head>`);
       }
 
       if (scriptTags) {

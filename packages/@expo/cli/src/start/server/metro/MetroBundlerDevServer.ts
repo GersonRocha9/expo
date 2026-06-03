@@ -21,6 +21,7 @@ import type { TransformProfile } from '@expo/metro/metro-babel-transformer';
 import type { CustomResolverOptions } from '@expo/metro/metro-resolver';
 import type { SerialAsset } from '@expo/metro-config/build/serializer/serializerAssets';
 import { sourceMapStringNonBlocking } from '@expo/metro-config/build/serializer/sourceMap';
+import type { ResolvedMetadata } from '@expo/router-server/build/server/metadata';
 import type { GetStreamingContentOptions } from '@expo/router-server/build/server/renderStreamingContent';
 import type { GetStaticContentOptions } from '@expo/router-server/build/static/renderStaticContent';
 import assert from 'assert';
@@ -33,7 +34,6 @@ import {
   resolveLoaderContextKey,
 } from 'expo-server/private';
 import path from 'path';
-import { type ReactNode } from 'react';
 import { text as readStreamToText } from 'stream/consumers';
 
 import {
@@ -508,10 +508,7 @@ export class MetroBundlerDevServer extends BundlerDevServer {
      * has no `generateMetadata()`. Mirrors the SSR runtime's `resolveMetadata` call in
      * `expo-server/src/vendor/environment/common.ts`.
      */
-    resolveMetadataAsync: (
-      path: string,
-      route: RouteNode
-    ) => Promise<{ headNodes: ReactNode[] } | null>;
+    resolveMetadataAsync: (path: string, route: RouteNode) => Promise<ResolvedMetadata | null>;
   }> {
     const { routerRoot } = this.instanceMetroOptions;
     assert(

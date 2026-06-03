@@ -1,7 +1,11 @@
 import type { ServerFontResourceDescriptor } from 'expo-font';
 import { type ReactNode } from 'react';
 
-import { getHydrationFlagScriptContents, getLoaderDataScriptContents } from './html';
+import {
+  type ExtraScriptTag,
+  getHydrationFlagScriptContents,
+  getLoaderDataScriptContents,
+} from './html';
 
 type CreateNodeResult = {
   headNodes?: ReactNode[];
@@ -37,6 +41,37 @@ export function createInjectedScriptAsNodes(srcs: string[]): CreateNodeResult {
       <link key={`script-preload-${src}`} rel="preload" href={src} as="script" />
     )),
     bodyNodes: srcs.map((src) => <script key={`script-src-${src}`} defer src={src} />),
+  };
+}
+
+/**
+ * Returns a `<link rel="icon">` head node for the given favicon URL. Companion to
+ * `createInjectedFaviconAsString` in `utils/html.ts`.
+ */
+export function createInjectedFaviconAsNodes(href: string): CreateNodeResult {
+  return {
+    headNodes: [<link key={`favicon-${href}`} rel="icon" href={href} />],
+  };
+}
+
+/**
+ * Returns `<script>` head nodes for each {@link ExtraScriptTag}. Companion to
+ * `createInjectedExtraScriptTagsAsString` in `utils/html.ts`.
+ */
+export function createInjectedExtraScriptTagsAsNodes(tags: ExtraScriptTag[]): CreateNodeResult {
+  return {
+    headNodes: tags.map((tag, index) =>
+      tag.platform === 'web' ? (
+        <script key={`extra-script-${index}`} src={tag.src} />
+      ) : (
+        <script
+          key={`extra-script-${index}`}
+          type="type/expo"
+          src={tag.src}
+          data-platform={tag.platform}
+        />
+      )
+    ),
   };
 }
 

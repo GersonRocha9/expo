@@ -25,6 +25,25 @@ export declare function createInjectedCssAsString(hrefs: string[]): string;
  */
 export declare function createInjectedScriptsAsString(srcs: string[]): string;
 /**
+ * Extra `<script>` tag descriptor used to inject platform-specific entry bundles. Web tags get a
+ * plain `<script>`; non-web tags get a `type="type/expo"` tag with a `data-platform` attribute that
+ * the runtime uses to pick the correct bundle.
+ */
+export type ExtraScriptTag = {
+    platform: string;
+    src: string;
+};
+/**
+ * Returns a `<link rel="icon">` tag for the given favicon URL. Companion to
+ * {@link createInjectedFaviconAsNodes} in `utils/react.tsx`.
+ */
+export declare function createInjectedFaviconAsString(href: string): string;
+/**
+ * Returns newline-separated `<script>` strings for each {@link ExtraScriptTag}. Companion to
+ * {@link createInjectedExtraScriptTagsAsNodes} in `utils/react.tsx`.
+ */
+export declare function createInjectedExtraScriptTagsAsString(tags: ExtraScriptTag[]): string;
+/**
  * Returns the string content of the hydration flag script, which sets the
  * `__EXPO_ROUTER_HYDRATE__` global flag to `true`.
  *

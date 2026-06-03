@@ -3,7 +3,6 @@ import { getConfig } from '@expo/config';
 import { generateFaviconAsync, generateImageAsync } from '@expo/image-utils';
 import fs from 'fs';
 import path from 'path';
-import React, { type ReactNode } from 'react';
 
 import { getUserDefinedFile } from './publicFolder';
 import type { ExportAssetMap } from './saveAssets';
@@ -17,27 +16,32 @@ export function getUserDefinedFaviconFile(projectRoot: string): string | null {
 }
 
 /**
- * Generates the virtual favicon and persists it to `files` (or disk). Returns `true` when a
- * favicon was prepared and `false` when there is nothing to inject (user-defined file present, or
- * no `web.favicon` in the Expo config).
+ * Resolves the virtual favicon from the Expo config, persists it to `files` (or disk), and returns
+ * the public URL it should be referenced by. Returns `null` if the user already has a favicon.ico
+ * in the public folder, or if there's no `web.favicon` in the Expo config.
+ *
+ * Consumers are responsible for the actual injection — use `createInjectedFaviconAsString` /
+ * `createInjectedFaviconAsNodes` from `@expo/router-server/build/utils/{html,react}` so the
+ * markup stays co-located with the other injected asset helpers.
  */
-async function persistVirtualFaviconAsync(
+export async function getVirtualFaviconHrefAsync(
   projectRoot: string,
   {
+    baseUrl,
     outputDir,
     files,
     exp,
-  }: { outputDir: string; files?: ExportAssetMap; exp?: ExpoConfig }
-): Promise<boolean> {
+  }: { outputDir: string; baseUrl: string; files?: ExportAssetMap; exp?: ExpoConfig }
+): Promise<string | null> {
   const existing = getUserDefinedFaviconFile(projectRoot);
   if (existing) {
     debug('Using user-defined favicon.ico file.');
-    return false;
+    return null;
   }
 
   const data = await getFaviconFromExpoConfigAsync(projectRoot, { exp });
   if (!data) {
-    return false;
+    return null;
   }
 
   const assetPath = path.join(outputDir, data.path);
@@ -51,52 +55,8 @@ async function persistVirtualFaviconAsync(
     debug('Writing asset to disk: ' + assetPath);
     await fs.promises.writeFile(assetPath, data.source);
   }
-  return true;
-}
 
-export async function getVirtualFaviconAssetsAsync(
-  projectRoot: string,
-  {
-    baseUrl,
-    outputDir,
-    files,
-    exp,
-  }: { outputDir: string; baseUrl: string; files?: ExportAssetMap; exp?: ExpoConfig }
-): Promise<((html: string) => string) | null> {
-  const prepared = await persistVirtualFaviconAsync(projectRoot, { outputDir, files, exp });
-  if (!prepared) {
-    return null;
-  }
-
-  return function injectFaviconTag(html: string): string {
-    if (!html.includes('</head>')) {
-      return html;
-    }
-    return html.replace('</head>', `<link rel="icon" href="${baseUrl}/favicon.ico" /></head>`);
-  };
-}
-
-/**
- * Counterpart to {@link getVirtualFaviconAssetsAsync} that returns React nodes suitable for
- * insertion into a streaming SSR document's `<head>` (via `renderOpts.metadata.headNodes`).
- */
-export async function getVirtualFaviconHeadNodesAsync(
-  projectRoot: string,
-  {
-    baseUrl,
-    outputDir,
-    files,
-    exp,
-  }: { outputDir: string; baseUrl: string; files?: ExportAssetMap; exp?: ExpoConfig }
-): Promise<ReactNode[] | null> {
-  const prepared = await persistVirtualFaviconAsync(projectRoot, { outputDir, files, exp });
-  if (!prepared) {
-    return null;
-  }
-
-  return [
-    React.createElement('link', { key: 'favicon', rel: 'icon', href: `${baseUrl}/favicon.ico` }),
-  ];
+  return `${baseUrl}/favicon.ico`;
 }
 
 export async function getFaviconFromExpoConfigAsync(

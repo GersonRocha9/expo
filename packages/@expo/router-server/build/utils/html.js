@@ -9,6 +9,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.escapeUnsafeCharacters = escapeUnsafeCharacters;
 exports.createInjectedCssAsString = createInjectedCssAsString;
 exports.createInjectedScriptsAsString = createInjectedScriptsAsString;
+exports.createInjectedFaviconAsString = createInjectedFaviconAsString;
+exports.createInjectedExtraScriptTagsAsString = createInjectedExtraScriptTagsAsString;
 exports.getHydrationFlagScriptContents = getHydrationFlagScriptContents;
 exports.getHydrationFlagScriptAsString = getHydrationFlagScriptAsString;
 exports.getLoaderDataScriptContents = getLoaderDataScriptContents;
@@ -62,6 +64,27 @@ function createInjectedCssAsString(hrefs) {
  */
 function createInjectedScriptsAsString(srcs) {
     return srcs.map((src) => `<script src="${escapeHtmlAttribute(src)}" defer></script>`).join('\n');
+}
+/**
+ * Returns a `<link rel="icon">` tag for the given favicon URL. Companion to
+ * {@link createInjectedFaviconAsNodes} in `utils/react.tsx`.
+ */
+function createInjectedFaviconAsString(href) {
+    return `<link rel="icon" href="${escapeHtmlAttribute(href)}">`;
+}
+/**
+ * Returns newline-separated `<script>` strings for each {@link ExtraScriptTag}. Companion to
+ * {@link createInjectedExtraScriptTagsAsNodes} in `utils/react.tsx`.
+ */
+function createInjectedExtraScriptTagsAsString(tags) {
+    return tags
+        .map((tag) => {
+        const src = escapeHtmlAttribute(tag.src);
+        return tag.platform === 'web'
+            ? `<script src="${src}"></script>`
+            : `<script type="type/expo" src="${src}" data-platform="${escapeHtmlAttribute(tag.platform)}"></script>`;
+    })
+        .join('\n');
 }
 /**
  * Returns the string content of the hydration flag script, which sets the

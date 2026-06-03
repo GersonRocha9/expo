@@ -14,7 +14,7 @@ type ResolveMetadataOptions = {
   params: Record<string, string | string[]>;
 };
 
-type ResolvedMetadata = {
+export type ResolvedMetadata = {
   metadata: Metadata;
   headNodes: ReactNode[];
 };

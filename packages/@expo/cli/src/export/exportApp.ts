@@ -2,6 +2,7 @@ import { getConfig } from '@expo/config';
 import type { Platform } from '@expo/config';
 import { resolveRelativeEntryPoint } from '@expo/config/paths';
 import type { SerialAsset } from '@expo/metro-config/build/serializer/serializerAssets';
+import { createInjectedFaviconAsString } from '@expo/router-server/build/utils/html';
 import assert from 'assert';
 import chalk from 'chalk';
 import fs from 'fs';
@@ -17,7 +18,7 @@ import {
 } from './exportDomComponents';
 import { assertEngineMismatchAsync, isEnableHermesManaged } from './exportHermes';
 import { exportApiRoutesStandaloneAsync, exportFromServerAsync } from './exportStaticAsync';
-import { getVirtualFaviconAssetsAsync } from './favicon';
+import { getVirtualFaviconHrefAsync } from './favicon';
 import { getPublicExpoManifestAsync } from './getPublicExpoManifest';
 import { copyPublicFolderAsync, getPublicFolderPath } from './publicFolder';
 import type { Options } from './resolveOptions';
@@ -280,14 +281,17 @@ export async function exportAppAsync(
             });
 
             // Add the favicon assets to the HTML.
-            const modifyHtml = await getVirtualFaviconAssetsAsync(projectRoot, {
+            const faviconHref = await getVirtualFaviconHrefAsync(projectRoot, {
               outputDir,
               baseUrl,
               files,
               exp: projectConfig.exp,
             });
-            if (modifyHtml) {
-              html = modifyHtml(html);
+            if (faviconHref && html.includes('</head>')) {
+              html = html.replace(
+                '</head>',
+                `${createInjectedFaviconAsString(faviconHref)}</head>`
+              );
             }
 
             // HACK: This is used for adding SSR shims in React Server Components.

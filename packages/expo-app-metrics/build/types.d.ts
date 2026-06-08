@@ -327,7 +327,6 @@ export interface ExpoAppMetricsModuleType {
      * @private This API is unstable and may change without notice.
      */
     getMainSession(): Session;
-    addCustomMetricToSession(metric: Metric): Promise<void>;
     /**
      * Resolves to the current foreground session — created when the app becomes
      * active and ended when it is backgrounded — as a shared object, or `null`

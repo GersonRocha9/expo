@@ -42,10 +42,6 @@ class WebSession extends globalThis.expo.SharedObject {
 class ExpoAppMetricsModule extends NativeModule implements ExpoAppMetricsModuleType {
   Session = WebSession as unknown as typeof Session;
 
-  addCustomMetricToSession(metric: Metric): Promise<void> {
-    throw new Error('Method not implemented.');
-  }
-
   async markFirstRender() {}
   async markInteractive(attributes?: MetricAttributes) {}
   logEvent(name: string, options?: LogEventOptions) {}
@@ -59,8 +55,8 @@ class ExpoAppMetricsModule extends NativeModule implements ExpoAppMetricsModuleT
   getMainSession(): Session {
     throw new Error('Method not implemented.');
   }
-  async getForegroundSession() {
-    return null;
+  async getForegroundSession(): Promise<Session | null> {
+    throw new Error('Method not implemented.');
   }
 }
 

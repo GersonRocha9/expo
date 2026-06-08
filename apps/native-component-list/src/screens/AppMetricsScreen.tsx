@@ -12,9 +12,11 @@ export default function AppMetricsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       let cancelled = false;
-      AppMetrics.getMainSession().then((s) => {
-        if (!cancelled) setMetrics(s?.metrics ?? []);
-      });
+      AppMetrics.getMainSession()
+        .getMetrics()
+        .then((m) => {
+          if (!cancelled) setMetrics(m);
+        });
       return () => {
         cancelled = true;
       };
@@ -24,7 +26,7 @@ export default function AppMetricsScreen() {
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
     try {
-      setMetrics((await AppMetrics.getMainSession())?.metrics ?? []);
+      setMetrics(await AppMetrics.getMainSession().getMetrics());
     } finally {
       setRefreshing(false);
     }

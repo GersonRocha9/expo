@@ -650,6 +650,87 @@ class SessionManagerTest {
 
   // endregion
 
+  // region Live Session Reader Tests
+
+  @Test
+  fun `getSessionRow reflects live isActive and endTimestamp`() =
+    runTest {
+      // Arrange
+      val sessionId = "test-session"
+      sessionManager.startSessionWithIdAt(sessionId, "2025-01-01T00:00:00.000Z")
+
+      // Assert: live row reports the session as active with no end timestamp
+      val active = sessionManager.getSessionRow(sessionId)
+      assertNotNull(active)
+      assertTrue(active!!.isActive)
+      assertNull(active.endTimestamp)
+
+      // Act: end the session
+      sessionManager.stopSession(sessionId)
+
+      // Assert: the same query now reflects the ended state
+      val ended = sessionManager.getSessionRow(sessionId)
+      assertNotNull(ended)
+      assertFalse(ended!!.isActive)
+      assertNotNull(ended.endTimestamp)
+    }
+
+  @Test
+  fun `getSessionRow returns null for an unknown session`() =
+    runTest {
+      assertNull(sessionManager.getSessionRow("does-not-exist"))
+    }
+
+  @Test
+  fun `getMetricsForSession returns only that session's metrics`() =
+    runTest {
+      // Arrange
+      val sessionId = "session-1"
+      val otherId = "session-2"
+      sessionManager.startSessionWithIdAt(sessionId, "2025-01-01T00:00:00.000Z")
+      sessionManager.startSessionWithIdAt(otherId, "2025-01-01T01:00:00.000Z")
+      database.metricDao().insertAll(
+        listOf(
+          createMetric("metric-1", sessionId),
+          createMetric("metric-2", sessionId),
+          createMetric("metric-3", otherId)
+        )
+      )
+
+      // Act
+      val metrics = sessionManager.getMetricsForSession(sessionId)
+
+      // Assert
+      assertEquals(setOf("metric-1", "metric-2"), metrics.map { it.metricId }.toSet())
+      assertTrue(metrics.all { it.sessionId == sessionId })
+    }
+
+  @Test
+  fun `getLogsForSession returns only that session's logs`() =
+    runTest {
+      // Arrange
+      val sessionId = "session-1"
+      val otherId = "session-2"
+      sessionManager.startSessionWithIdAt(sessionId, "2025-01-01T00:00:00.000Z")
+      sessionManager.startSessionWithIdAt(otherId, "2025-01-01T01:00:00.000Z")
+      database.logDao().insertAll(
+        listOf(
+          createLog("log-1", sessionId),
+          createLog("log-2", sessionId),
+          createLog("log-3", otherId)
+        )
+      )
+
+      // Act
+      val logs = sessionManager.getLogsForSession(sessionId)
+
+      // Assert
+      assertEquals(setOf("log-1", "log-2"), logs.map { it.logId }.toSet())
+      assertTrue(logs.all { it.sessionId == sessionId })
+    }
+
+  // endregion
+
   // region Helper Methods
 
   private fun createMetric(

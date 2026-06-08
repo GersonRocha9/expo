@@ -8,16 +8,20 @@ import expo.modules.appmetrics.logevents.sanitizeLogEventAttributes
 import expo.modules.appmetrics.logevents.validateEventBody
 import expo.modules.appmetrics.logevents.validateEventName
 import expo.modules.appmetrics.memory.MemoryMetricsManager
+import expo.modules.appmetrics.storage.JsDebugSession
+import expo.modules.appmetrics.storage.JsLogRecord
 import expo.modules.appmetrics.storage.JsMetric
-import expo.modules.appmetrics.storage.JsSession
 import expo.modules.appmetrics.storage.LogRecord
 import expo.modules.appmetrics.storage.Metric
 import expo.modules.appmetrics.storage.SessionManager
+import expo.modules.appmetrics.storage.SessionMetricInput
+import expo.modules.appmetrics.storage.SessionSharedObject
 import expo.modules.appmetrics.updates.UpdatesMonitoring
 import expo.modules.appmetrics.updates.UpdatesStateEvent
 import expo.modules.appmetrics.utils.JsonAny
 import expo.modules.appmetrics.utils.TimeUtils
 import expo.modules.interfaces.constants.ConstantsInterface
+import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -45,6 +49,13 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
   lateinit var updatesMonitoring: UpdatesMonitoring
   private var subscription: UpdatesStateChangeSubscription? = null
   lateinit var appSessionId: String
+
+  // Captured at module creation so `getMainSession` can build the main-session
+  // handle from in-memory state without a storage round-trip
+  lateinit var appSessionStartTimestamp: String
+
+  // Cached JS handle for the main session.
+  private var mainSessionObject: SessionSharedObject? = null
 
   private val moduleCreationTimestamp = TimeUtils.getCurrentTimestampInISOFormat()
 
@@ -117,6 +128,7 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
         sessionManager = SessionManager(context)
 
         appSessionId = sessionManager.createSessionId()
+        appSessionStartTimestamp = TimeUtils.getProcessStartTimestamp()
 
         // Persist the session row eagerly so it's visible to readers
         // (`getMainSession`, `addCustomMetricToSession`, …) before any startup
@@ -127,7 +139,7 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
           sessionManager.deactivateAllSessionsBefore(moduleCreationTimestamp)
           sessionManager.startSessionWithIdAt(
             sessionId = appSessionId,
-            timestamp = TimeUtils.getProcessStartTimestamp(),
+            timestamp = appSessionStartTimestamp,
             metadata = metadata
           )
         }
@@ -168,7 +180,11 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
       // Debug-only: surfaces the inactive (ended) sessions for on-device
       // inspection (e.g. the ObserveTester app)
       AsyncFunction("getInactiveSessions") Coroutine { ->
-        sessionManager.getInactiveSessions().map { JsSession.fromSessionWithMetrics(it) }
+        sessionManager.getInactiveSessions().map { JsDebugSession.fromSessionWithMetrics(it) }
+      }
+
+      AsyncFunction("addCustomMetricToSession") Coroutine { metric: JsMetric ->
+        sessionManager.addMetrics(listOf(metric.toMetric()), sessionId = metric.sessionId)
       }
 
       AsyncFunction("takeMemoryUsageSnapshotAsync") Coroutine { sessionId: String? ->
@@ -177,17 +193,54 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
 
       AsyncFunction("clearStoredEntries") Coroutine { -> sessionManager.clearAllData() }
 
-      AsyncFunction("addCustomMetricToSession") Coroutine { metric: JsMetric ->
-        sessionManager.addMetrics(listOf(metric.toMetric()), sessionId = metric.sessionId)
+      Function("getMainSession") {
+        mainSessionObject ?: SessionSharedObject(
+          sessionId = appSessionId,
+          type = "main",
+          startDate = appSessionStartTimestamp,
+          appContext = appContext
+        ).also { mainSessionObject = it }
       }
 
-      AsyncFunction("getMainSession") Coroutine { ->
-        sessionManager.getSessionById(appSessionId)?.let { JsSession.fromSessionWithMetrics(it) }
+      // Android has no foreground-session tracking yet, so there's never a session to return.
+      // Async to match the `Promise<Session | null>` JS contract.
+      AsyncFunction("getForegroundSession") {
+        null as SessionSharedObject?
       }
 
-      // Android has no foreground-session tracking yet
-      AsyncFunction("getForegroundSession") Coroutine { ->
-        null as JsSession?
+      Class("Session", SessionSharedObject::class) {
+        // TODO(@ubax): Allow for user session creation from JS
+        Constructor { ->
+          throw CodedException(
+            "Session objects can't be created from JavaScript because sessions are opened and managed natively. " +
+              "Get one from AppMetrics.getMainSession() or AppMetrics.getForegroundSession() instead."
+          )
+        }
+
+        Property("id", SessionSharedObject::sessionId)
+        Property("type", SessionSharedObject::type)
+        Property("startDate", SessionSharedObject::startDate)
+
+        AsyncFunction("isActive") Coroutine { ref: SessionSharedObject ->
+          sessionManager.getSessionRow(ref.sessionId)?.isActive ?: true
+        }
+
+        AsyncFunction("getEndDate") Coroutine { ref: SessionSharedObject ->
+          sessionManager.getSessionRow(ref.sessionId)?.endTimestamp
+        }
+
+        AsyncFunction("getMetrics") Coroutine { ref: SessionSharedObject ->
+          sessionManager.getMetricsForSession(ref.sessionId).map { JsMetric.fromMetric(it) }
+        }
+
+        AsyncFunction("getLogs") Coroutine { ref: SessionSharedObject ->
+          sessionManager.getLogsForSession(ref.sessionId).map { JsLogRecord.fromLogRecord(it) }
+        }
+
+        AsyncFunction("addMetric") Coroutine { ref: SessionSharedObject, metric: SessionMetricInput ->
+          sessionStartJob?.join()
+          sessionManager.addMetrics(listOf(metric.toMetric(ref.sessionId)), sessionId = ref.sessionId)
+        }
       }
     }
 

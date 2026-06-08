@@ -42,13 +42,24 @@ export default function Debug() {
       <Button
         title="Log main session to console"
         onPress={async () => {
-          const session = await AppMetrics.getMainSession();
-
-          if (session) {
-            console.log(JSON.stringify(session));
-          } else {
-            console.error('Main session is null');
-          }
+          const session = AppMetrics.getMainSession();
+          const [metrics, logs, isActive, endDate] = await Promise.all([
+            session.getMetrics(),
+            session.getLogs(),
+            session.isActive(),
+            session.getEndDate(),
+          ]);
+          console.log(
+            JSON.stringify({
+              id: session.id,
+              type: session.type,
+              startDate: session.startDate,
+              endDate,
+              isActive,
+            })
+          );
+          console.log(JSON.stringify(metrics));
+          console.log(JSON.stringify(logs));
         }}
         theme="secondary"
       />

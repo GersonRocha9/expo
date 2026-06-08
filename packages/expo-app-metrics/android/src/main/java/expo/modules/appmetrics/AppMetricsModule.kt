@@ -184,6 +184,11 @@ class AppMetricsModule : Module(), UpdatesStateChangeListener {
       AsyncFunction("getMainSession") Coroutine { ->
         sessionManager.getSessionById(appSessionId)?.let { JsSession.fromSessionWithMetrics(it) }
       }
+
+      // Android has no foreground-session tracking yet
+      AsyncFunction("getForegroundSession") Coroutine { ->
+        null as JsSession?
+      }
     }
 
   fun setEnvironment(environment: String) {

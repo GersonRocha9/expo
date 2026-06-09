@@ -13,7 +13,7 @@
 
 ### 💡 Others
 
-- When `source` of `useVideoPlayer` changes use `replaceAsync` instead of re-creating the player.
+- When `source` of `useVideoPlayer` changes use `replaceAsync` instead of re-creating the player. ([#46495](https://github.com/expo/expo/pull/46495) by [@behenate](https://github.com/behenate))
 
 ## 56.1.2 — 2026-05-21
 

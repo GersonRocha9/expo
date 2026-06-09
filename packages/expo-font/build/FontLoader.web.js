@@ -53,6 +53,12 @@ export function loadSingleFontAsync(name, input) {
     if (typeof input !== 'object' || typeof input.uri !== 'string' || input.downloadAsync) {
         throwInvalidSourceError(input);
     }
+    // On the server, `ExpoFontLoader.loadAsync` writes to the per-render `withServerContext` store
+    // and throws synchronously if called outside that scope. That throw is a programmer error and
+    // must propagate so misuse is loud (otherwise the font silently doesn't render).
+    if (typeof window === 'undefined') {
+        return ExpoFontLoader.loadAsync(name, input);
+    }
     try {
         return ExpoFontLoader.loadAsync(name, input);
     }
